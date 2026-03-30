@@ -16,6 +16,7 @@ public class Main {
         SqlConn conn = new SqlConn();
         try (Connection connection = conn.getConnection()) {
             createTable(connection);
+            createLoginDemoTable(connection);
             runCli(connection);
         } catch (SQLException e) {
             e.printStackTrace();
@@ -37,11 +38,12 @@ public class Main {
                     case "2" -> readStudents(connection);
                     case "3" -> handleUpdate(connection, scanner);
                     case "4" -> handleDelete(connection, scanner);
-                    case "5" -> {
+                    case "5" -> runSqlInjectionDemo(connection);
+                    case "6" -> {
                         running = false;
                         System.out.println("Exiting CLI...");
                     }
-                    default -> System.out.println("Invalid option. Choose 1 to 5.");
+                    default -> System.out.println("Invalid option. Choose 1 to 6.");
                 }
             }
         }
@@ -54,7 +56,8 @@ public class Main {
         System.out.println("2. Read students");
         System.out.println("3. Update student email");
         System.out.println("4. Delete student");
-        System.out.println("5. Exit");
+        System.out.println("5. Run SQL injection demo");
+        System.out.println("6. Exit");
         System.out.print("Enter choice: ");
     }
 
@@ -124,6 +127,27 @@ public class Main {
         }
     }
 
+    private static void createLoginDemoTable(Connection connection) throws SQLException {
+        String createTableSql = """
+                CREATE TABLE IF NOT EXISTS login_demo_users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(100) NOT NULL UNIQUE,
+                    password VARCHAR(100) NOT NULL
+                )
+                """;
+        String seedSql = """
+                INSERT INTO login_demo_users (username, password)
+                VALUES ('admin', 'admin123')
+                ON CONFLICT (username) DO NOTHING
+                """;
+
+        try (Statement statement = connection.createStatement()) {
+            statement.execute(createTableSql);
+            statement.executeUpdate(seedSql);
+            System.out.println("login_demo_users table is ready");
+        }
+    }
+
     private static void createStudent(Connection connection, String name, String email) throws SQLException {
         String sql = "INSERT INTO students (name, email) VALUES (?, ?)";
 
@@ -176,6 +200,61 @@ public class Main {
             preparedStatement.setInt(1, id);
             int deletedRows = preparedStatement.executeUpdate();
             System.out.println("Deleted rows: " + deletedRows);
+        }
+    }
+
+    private static void runSqlInjectionDemo(Connection connection) throws SQLException {
+        String safeUsername = "admin";
+        String safePassword = "admin123";
+        String attackerUsername = "does-not-matter";
+        String attackerPassword = "' OR '1'='1";
+
+        System.out.println();
+        System.out.println("SQL injection demo");
+        System.out.println("Seeded login user: admin / admin123");
+        System.out.println("Attack payload password: " + attackerPassword);
+        System.out.println();
+
+        boolean validStatementLogin = loginWithStatement(connection, safeUsername, safePassword);
+        boolean injectedStatementLogin = loginWithStatement(connection, attackerUsername, attackerPassword);
+        boolean validPreparedLogin = loginWithPreparedStatement(connection, safeUsername, safePassword);
+        boolean injectedPreparedLogin = loginWithPreparedStatement(connection, attackerUsername, attackerPassword);
+
+        System.out.println("Statement with valid credentials: " + validStatementLogin);
+        System.out.println("Statement with injected credentials: " + injectedStatementLogin);
+        System.out.println("PreparedStatement with valid credentials: " + validPreparedLogin);
+        System.out.println("PreparedStatement with injected credentials: " + injectedPreparedLogin);
+    }
+
+    private static boolean loginWithStatement(Connection connection, String username, String password) throws SQLException {
+        String sql = "SELECT id FROM login_demo_users WHERE username = '"
+                + username
+                + "' AND password = '"
+                + password
+                + "'";
+
+        System.out.println("Statement SQL: " + sql);
+
+        try (
+                Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery(sql)
+        ) {
+            return resultSet.next();
+        }
+    }
+
+    private static boolean loginWithPreparedStatement(Connection connection, String username, String password) throws SQLException {
+        String sql = "SELECT id FROM login_demo_users WHERE username = ? AND password = ?";
+
+        System.out.println("PreparedStatement SQL template: " + sql);
+
+        try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+            preparedStatement.setString(1, username);
+            preparedStatement.setString(2, password);
+
+            try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                return resultSet.next();
+            }
         }
     }
 }
